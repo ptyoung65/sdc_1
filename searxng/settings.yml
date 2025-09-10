@@ -1,0 +1,43 @@
+use_default_settings: true
+
+server:
+  secret_key: "your-secret-key-change-in-production"
+  limiter: false
+  image_proxy: true
+  method: "GET"
+
+botdetection:
+  ip_limit:
+    filter_link_local: false
+
+search:
+  safe_search: 0
+  autocomplete: "google"
+  default_lang: "ko"
+  
+engines:
+  - name: google
+    engine: google
+    shortcut: go
+    use_mobile_ui: false
+    categories: [general, web]
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: bi
+    categories: [general, web]
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    categories: [general, web]
+    disabled: false
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    base_url: 'https://ko.wikipedia.org/'
+    categories: [general]
+    disabled: false

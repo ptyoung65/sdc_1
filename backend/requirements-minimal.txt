@@ -1,0 +1,22 @@
+# Minimal requirements for container build
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+sqlalchemy==2.0.23
+asyncpg==0.29.0
+redis==4.6.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+aiofiles==24.1.0
+httpx==0.25.2
+python-dotenv==1.0.0
+loguru==0.7.2
+prometheus-client==0.19.0
+
+# Vector Database and ML
+pymilvus==2.3.4
+kiwipiepy==0.17.0
+sentence-transformers==2.2.2
+psutil==7.0.0

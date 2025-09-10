@@ -1,0 +1,519 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: sdc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sdc_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sdc_password}
+      POSTGRES_DB: ${POSTGRES_DB:-sdc_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sdc_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and rate limiting
+  redis:
+    image: docker.io/redis:7-alpine
+    container_name: sdc-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Milvus Vector Database
+  milvus:
+    image: docker.io/milvusdb/milvus:v2.3.3
+    container_name: sdc-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_USE_EMBED: "true"
+      COMMON_STORAGETYPE: "local"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Elasticsearch for full-text search
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    container_name: sdc-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Docling Document Processing Service
+  docling:
+    image: docker.io/legendofmk/docling-cpu-api:latest
+    container_name: sdc-docling
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=5000
+    volumes:
+      - ./uploads:/app/uploads
+      - ./processed:/app/processed
+    ports:
+      - "5000:5000"
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Searxng Web Search Service
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: sdc-searxng
+    restart: unless-stopped
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-your-secret-key-change-in-production}
+    volumes:
+      - searxng_data:/etc/searxng
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Korean RAG Microservice
+  korean-rag:
+    build:
+      context: ./services/korean-rag-service
+      dockerfile: Dockerfile
+    container_name: sdc-korean-rag
+    restart: unless-stopped
+    environment:
+      # Milvus connection
+      MILVUS_HOST: milvus
+      MILVUS_PORT: 19530
+      
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - ./backend/services:/app/services:ro  # Korean services 모듈 마운트
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - rag_cache:/app/vector_cache
+    ports:
+      - "8009:8009"
+    depends_on:
+      milvus:
+        condition: service_healthy
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Graph RAG Microservice
+  graph-rag:
+    build:
+      context: ./services/graph-rag-service
+      dockerfile: Dockerfile
+    container_name: sdc-graph-rag
+    restart: unless-stopped
+    environment:
+      # Redis connection
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 3
+      
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      
+      # Korean RAG Service URL for hybrid queries
+      KOREAN_RAG_URL: http://korean-rag:8009
+    volumes:
+      - ./logs:/app/logs
+      - graph_rag_storage:/tmp/graph_rag_storage
+    ports:
+      - "8010:8010"
+    depends_on:
+      redis:
+        condition: service_healthy
+      korean-rag:
+        condition: service_healthy
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Keyword RAG Microservice
+  keyword-rag:
+    build:
+      context: ./services/keyword-rag-service
+      dockerfile: Dockerfile
+    container_name: sdc-keyword-rag
+    restart: unless-stopped
+    environment:
+      # Elasticsearch connection
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      
+      # Other RAG Services URLs for triple queries
+      VECTOR_RAG_URL: http://korean-rag:8009
+      GRAPH_RAG_URL: http://graph-rag:8010
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8011:8011"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      korean-rag:
+        condition: service_healthy
+      graph-rag:
+        condition: service_healthy
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Text-to-SQL RAG Microservice
+  text-to-sql-rag:
+    build:
+      context: ./services/text-to-sql-rag-service
+      dockerfile: Dockerfile
+    container_name: sdc-text-to-sql-rag
+    restart: unless-stopped
+    environment:
+      # Database connection
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sdc_user}:${POSTGRES_PASSWORD:-sdc_password}@postgres:5432/${POSTGRES_DB:-sdc_db}
+      
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      
+      # AI Services for LLM integration
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8012:8012"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8012/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Backend API Service
+  backend:
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: backend-builder
+    container_name: sdc-backend
+    restart: unless-stopped
+    environment:
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sdc_user}:${POSTGRES_PASSWORD:-sdc_password}@postgres:5432/${POSTGRES_DB:-sdc_db}
+      
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      
+      # Milvus
+      MILVUS_HOST: milvus
+      MILVUS_PORT: 19530
+      
+      # Elasticsearch
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      
+      # Docling
+      DOCLING_URL: http://docling:5000
+      
+      # Searxng
+      SEARXNG_URL: http://searxng:8080
+      
+      # Korean RAG Service
+      KOREAN_RAG_URL: http://korean-rag:8009
+      
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      
+      # AI Services
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      docling:
+        condition: service_healthy
+      korean-rag:
+        condition: service_healthy
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    command: ["python", "-m", "uvicorn", "backend.api_main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # Frontend Service
+  frontend:
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: frontend-builder
+    container_name: sdc-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NODE_ENV: ${NODE_ENV:-development}
+    volumes:
+      - ./frontend:/app/frontend:rw
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    command: ["npm", "run", "dev"]
+
+  # Prometheus Monitoring
+  prometheus:
+    image: docker.io/prom/prometheus:latest
+    container_name: sdc-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Node Exporter for host metrics
+  node-exporter:
+    image: docker.io/prom/node-exporter:latest
+    container_name: sdc-node-exporter
+    restart: unless-stopped
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - '/:/host:ro,rslave'
+    ports:
+      - "9101:9100"
+    networks:
+      - sdc-network
+    pid: host
+
+  # cAdvisor for container metrics
+  cadvisor:
+    image: docker.io/zcube/cadvisor:latest
+    container_name: sdc-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /cgroup:/cgroup:ro
+    ports:
+      - "8081:8080"
+    networks:
+      - sdc-network
+
+  # Grafana Dashboard
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    container_name: sdc-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3010:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: docker.io/nginx:alpine
+    container_name: sdc-nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/sites-enabled:/etc/nginx/sites-enabled:ro
+      - nginx_logs:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - sdc-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  milvus_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  searxng_data:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  rag_cache:
+    driver: local
+  graph_rag_storage:
+    driver: local
+
+networks:
+  sdc-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
