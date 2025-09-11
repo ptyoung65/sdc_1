@@ -226,8 +226,8 @@ export function MessageBubble({
             </div>
           )}
 
-          {/* Multi-RAG Results - Only for assistant messages with multi-RAG data */}
-          {isAssistant && message.metadata?.hasMultiRAG && message.metadata?.ragResults && (
+          {/* Multi-RAG Results - Hidden for now */}
+          {false && isAssistant && message.metadata?.hasMultiRAG && message.metadata?.ragResults && (
             <div className="mt-3 pt-3 border-t border-border/50">
               <MultiRAGResponse
                 ragResults={message.metadata.ragResults as RAGResult[]}

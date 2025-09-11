@@ -40,6 +40,7 @@ export function ChatInterface({ conversation, className }: ChatInterfaceProps) {
   })
   const [currentUserId] = React.useState("default_user") // TODO: 실제 사용자 인증 구현
   const [currentConversationId, setCurrentConversationId] = React.useState<string | null>(null)
+  const [shouldAutoScroll, setShouldAutoScroll] = React.useState(true)
   const scrollAreaRef = React.useRef<HTMLDivElement>(null)
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
 
@@ -80,10 +81,33 @@ export function ChatInterface({ conversation, className }: ChatInterfaceProps) {
     fetchSearchEngines()
   }, [])
 
-  // Auto scroll to bottom
+  // Auto scroll to bottom - only when shouldAutoScroll is true
   React.useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, isLoading])
+    if (shouldAutoScroll) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+      }, 100)
+    }
+  }, [messages, isLoading, shouldAutoScroll])
+
+  // Handle manual scrolling to disable auto-scroll
+  React.useEffect(() => {
+    const scrollArea = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]')
+    if (!scrollArea) return
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scrollArea
+      const isAtBottom = scrollTop + clientHeight >= scrollHeight - 50
+      
+      // If user scrolls away from bottom, disable auto-scroll
+      if (!isAtBottom) {
+        setShouldAutoScroll(false)
+      }
+    }
+
+    scrollArea.addEventListener('scroll', handleScroll)
+    return () => scrollArea.removeEventListener('scroll', handleScroll)
+  }, [])
 
   const handleSendMessage = async (content: string, files?: File[]) => {
     if (!content.trim() && (!files || files.length === 0)) return
@@ -106,6 +130,7 @@ export function ChatInterface({ conversation, className }: ChatInterfaceProps) {
     }
 
     setMessages(prev => [...prev, userMessage])
+    setShouldAutoScroll(true) // Enable auto-scroll when sending message
     setIsLoading(true)
 
     try {
@@ -378,8 +403,8 @@ export function ChatInterface({ conversation, className }: ChatInterfaceProps) {
             </div>
           </div>
 
-          {/* Multi-RAG Selection Toggles - Only show when document or combined search is selected */}
-          {(searchMode === 'documents' || searchMode === 'combined') && (
+          {/* Multi-RAG Selection Toggles - Hidden for now */}
+          {false && (searchMode === 'documents' || searchMode === 'combined') && (
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">RAG 유형:</span>
               <div className="flex gap-1">
@@ -454,35 +479,37 @@ export function ChatInterface({ conversation, className }: ChatInterfaceProps) {
             </div>
           )}
 
-          {/* Agentic RAG Toggle */}
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">고급 AI:</span>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={useAgenticRag}
-                onChange={(e) => setUseAgenticRag(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300"
-              />
-              <span className="text-xs text-muted-foreground">
-                에이전틱 RAG {useAgenticRag ? '활성' : '비활성'}
-              </span>
-            </label>
-            {useAgenticRag && (
-              <div className="flex items-center gap-1 ml-2">
-                <span className="text-xs text-muted-foreground">복잡도:</span>
-                <select
-                  value={agenticComplexityThreshold}
-                  onChange={(e) => setAgenticComplexityThreshold(Number(e.target.value))}
-                  className="px-2 py-1 text-xs rounded border bg-background"
-                >
-                  <option value={3}>낮음 (3)</option>
-                  <option value={5}>보통 (5)</option>
-                  <option value={7}>높음 (7)</option>
-                </select>
-              </div>
-            )}
-          </div>
+          {/* Agentic RAG Toggle - Hidden for now */}
+          {false && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">고급 AI:</span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useAgenticRag}
+                  onChange={(e) => setUseAgenticRag(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300"
+                />
+                <span className="text-xs text-muted-foreground">
+                  에이전틱 RAG {useAgenticRag ? '활성' : '비활성'}
+                </span>
+              </label>
+              {useAgenticRag && (
+                <div className="flex items-center gap-1 ml-2">
+                  <span className="text-xs text-muted-foreground">복잡도:</span>
+                  <select
+                    value={agenticComplexityThreshold}
+                    onChange={(e) => setAgenticComplexityThreshold(Number(e.target.value))}
+                    className="px-2 py-1 text-xs rounded border bg-background"
+                  >
+                    <option value={3}>낮음 (3)</option>
+                    <option value={5}>보통 (5)</option>
+                    <option value={7}>높음 (7)</option>
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <MessageInput
           value={inputValue}

@@ -19,12 +19,13 @@ python-multipart==0.0.6
 bcrypt==4.0.1
 
 # AI and ML Libraries
-langchain==0.1.0
-langchain-openai==0.0.2
-langchain-community==0.0.10
-langgraph==0.0.26
-openai==1.6.1
-tiktoken==0.5.2
+langchain==0.2.0
+langchain-openai==0.1.8
+langchain-community==0.2.0
+langchain-core==0.2.2
+langgraph==0.0.55
+openai==1.35.0
+tiktoken==0.7.0
 
 # Korean Language Processing
 sentence-transformers==2.2.2

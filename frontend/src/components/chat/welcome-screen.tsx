@@ -8,8 +8,7 @@ import {
   Search, 
   Zap, 
   ArrowRight,
-  Sparkles,
-  Bot
+  Sparkles
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -95,31 +94,11 @@ export function WelcomeScreen({ onSendMessage }: WelcomeScreenProps) {
     >
       {/* Header */}
       <motion.div variants={itemVariants} className="mb-8">
-        <div className="flex items-center justify-center mb-4">
-          <div className="relative">
-            <div className="h-16 w-16 bg-gradient-to-r from-primary to-blue-600 rounded-2xl flex items-center justify-center">
-              <Bot className="h-8 w-8 text-white" />
-            </div>
-            <motion.div
-              animate={{ 
-                scale: [1, 1.2, 1],
-                opacity: [0.5, 0.8, 0.5]
-              }}
-              transition={{ 
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut"
-              }}
-              className="absolute inset-0 bg-gradient-to-r from-primary to-blue-600 rounded-2xl -z-10"
-            />
-          </div>
-        </div>
-        
         <h1 className="text-3xl font-bold gradient-text mb-2">
           SDC Gen AI에 오신 것을 환영합니다
         </h1>
         <p className="text-lg text-muted-foreground max-w-md">
-          멀티 LLM 기반 대화형 AI 서비스로 무엇이든 물어보세요
+          대화형 AI 서비스로 무엇이든 물어보세요
         </p>
       </motion.div>
 
