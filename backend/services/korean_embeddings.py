@@ -42,6 +42,31 @@ class KoreanTextProcessor:
             except Exception as e:
                 logger.warning(f"⚠️ Kiwi 초기화 실패: {e}")
                 
+    def preprocess_text(self, text: str) -> str:
+        """한국어 텍스트 전처리"""
+        # 기본적인 정리
+        text = text.strip()
+        
+        # 연속된 공백을 하나로
+        text = re.sub(r'\s+', ' ', text)
+        
+        # 한글, 영문, 숫자, 기본 문장부호만 유지
+        text = re.sub(r'[^\w\s.!?가-힣]', ' ', text)
+        
+        return text.strip()
+    
+    def extract_keywords(self, text: str) -> List[str]:
+        """한국어 텍스트에서 키워드 추출"""
+        tokens = self.tokenize(text)
+        
+        # 길이가 2자 이상인 토큰만 키워드로 간주
+        keywords = [token for token in tokens if len(token) >= 2]
+        
+        # 빈도 기반으로 상위 키워드 선택
+        from collections import Counter
+        counter = Counter(keywords)
+        return [word for word, count in counter.most_common(10)]
+    
     def tokenize(self, text: str) -> List[str]:
         """한국어 텍스트 토큰화"""
         if self.kiwi:
@@ -69,7 +94,7 @@ class KoreanTextProcessor:
     def chunk_text(self, 
                    text: str, 
                    chunk_size: int = 500,
-                   chunk_overlap: int = 100) -> List[Dict[str, Any]]:
+                   overlap: int = 50) -> List[str]:
         """
         한국어 텍스트를 의미 단위로 청킹
         
@@ -103,30 +128,20 @@ class KoreanTextProcessor:
             else:
                 # 현재 청크 저장
                 if current_chunk:
-                    chunks.append({
-                        'text': current_chunk,
-                        'index': chunk_index,
-                        'start_char': max(0, chunk_index * (chunk_size - chunk_overlap)),
-                        'tokens': self.tokenize(current_chunk)
-                    })
+                    chunks.append(current_chunk)
                     chunk_index += 1
                 
                 # 새 청크 시작 (오버랩 포함)
-                if chunk_overlap > 0 and current_chunk:
+                if overlap > 0 and current_chunk:
                     # 이전 청크의 마지막 부분 포함
-                    overlap_text = current_chunk[-chunk_overlap:]
+                    overlap_text = current_chunk[-overlap:]
                     current_chunk = overlap_text + " " + sentence
                 else:
                     current_chunk = sentence
         
         # 마지막 청크 저장
         if current_chunk:
-            chunks.append({
-                'text': current_chunk,
-                'index': chunk_index,
-                'start_char': chunk_index * (chunk_size - chunk_overlap),
-                'tokens': self.tokenize(current_chunk)
-            })
+            chunks.append(current_chunk)
         
         return chunks
 
@@ -272,6 +287,61 @@ class KoreanEmbeddingService:
             weighted_vector = weighted_vector / norm
             
         return weighted_vector
+    
+    def embed_text(self, text: str) -> np.ndarray:
+        """
+        텍스트를 TF-IDF 벡터로 변환
+        
+        Args:
+            text: 벡터화할 텍스트
+            
+        Returns:
+            TF-IDF 벡터 (numpy array)
+        """
+        if not text.strip():
+            return np.zeros(self.embedding_dim)
+        
+        # 캐시 확인
+        cache_key = self._get_cache_key(text)
+        cached_embedding = self._get_from_cache(cache_key)
+        if cached_embedding is not None:
+            return cached_embedding
+        
+        # 텍스트 전처리
+        processed_text = self.text_processor.preprocess_text(text)
+        
+        # TF-IDF 벡터화
+        try:
+            # 벡터라이저가 아직 fit되지 않았으면 이 텍스트로 fit
+            if not hasattr(self.vectorizer, 'vocabulary_') or self.vectorizer.vocabulary_ is None:
+                self.vectorizer.fit([processed_text])
+            
+            # 벡터 변환
+            vector = self.vectorizer.transform([processed_text])
+            vector_array = vector.toarray()[0]
+            
+            # 차원 조정
+            if len(vector_array) < self.embedding_dim:
+                # 부족한 차원은 0으로 패딩
+                padded_vector = np.zeros(self.embedding_dim)
+                padded_vector[:len(vector_array)] = vector_array
+                vector_array = padded_vector
+            elif len(vector_array) > self.embedding_dim:
+                # 초과 차원은 잘라내기
+                vector_array = vector_array[:self.embedding_dim]
+            
+            # 한국어 가중치 적용
+            weighted_vector = self._apply_korean_weights(text, vector_array)
+            
+            # 캐시에 저장
+            self._save_to_cache(cache_key, weighted_vector)
+            
+            return weighted_vector
+            
+        except Exception as e:
+            logger.error(f"TF-IDF 벡터화 실패: {e}")
+            # 실패 시 랜덤 벡터 반환
+            return np.random.rand(self.embedding_dim) * 0.1
     
     def fit_corpus(self, texts: List[str]):
         """

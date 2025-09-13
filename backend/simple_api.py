@@ -1637,21 +1637,36 @@ async def upload_document_default(
             }
             
             async with aiohttp.ClientSession() as session:
+                # Send to Korean RAG Orchestrator (Port 8008)
+                orchestrator_payload = {
+                    "user_id": user_id,
+                    "filename": file.filename,
+                    "content": text_content,
+                    "metadata": {
+                        "filename": file.filename,
+                        "file_size": len(processed_content),
+                        "processing_method": processing_method,
+                        "original_file_type": file_extension,
+                        "upload_time": datetime.now().isoformat(),
+                        "document_id": doc_id
+                    }
+                }
                 async with session.post(
-                    "http://localhost:8010/documents",
-                    json=rag_payload,
+                    "http://localhost:8008/process_document",
+                    json=orchestrator_payload,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
                     if response.status == 200:
                         rag_response = await response.json()
-                        if rag_response.get("success"):
+                        if rag_response.get("status") == "success":
                             rag_processing_status = "vectorization_started"
-                            print(f"✅ [RAG-AUTO] Document successfully sent to Korean RAG service")
-                            print(f"🔄 [RAG-AUTO] Chunks created: {rag_response.get('data', {}).get('chunks_created', 0)}")
+                            print(f"✅ [KOREAN-RAG] Document successfully sent to Korean RAG Orchestrator")
+                            print(f"🔄 [KOREAN-RAG] Chunks processed: {rag_response.get('chunks_processed', 0)}")
+                            print(f"📊 [KOREAN-RAG] Chunks stored: {rag_response.get('chunks_stored', 0)}")
                         else:
-                            print(f"⚠️ [RAG-AUTO] Korean RAG service returned error: {rag_response.get('message', 'Unknown error')}")
+                            print(f"⚠️ [KOREAN-RAG] Korean RAG Orchestrator returned error")
                     else:
-                        print(f"⚠️ [RAG-AUTO] Failed to send to Korean RAG service: HTTP {response.status}")
+                        print(f"⚠️ [KOREAN-RAG] Failed to send to Korean RAG Orchestrator: HTTP {response.status}")
         except Exception as e:
             print(f"❌ [RAG-AUTO] Error sending document to Korean RAG service: {e}")
             rag_processing_status = "rag_error"

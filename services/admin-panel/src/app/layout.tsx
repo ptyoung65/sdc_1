@@ -1,4 +1,5 @@
 import './globals.css'
+import Navigation from '../components/Navigation'
 
 export const metadata = {
   title: 'AI 가드레일 관리자 - SDC Admin Panel',
@@ -12,7 +13,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ko">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <Navigation />
+        {children}
+      </body>
     </html>
   )
 }
