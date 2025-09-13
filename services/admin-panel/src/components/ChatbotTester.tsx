@@ -7,6 +7,8 @@ import { Input } from './ui/input'
 import { Badge } from './ui/badge'
 import { Textarea } from './ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
+import { TestHistoryStorage } from '../lib/testHistoryStorage'
+import { ChunkDetail } from '../types/TestHistory'
 
 interface ChatSource {
   chunk_id: string
@@ -118,6 +120,7 @@ const ChatbotTester: React.FC = () => {
 
     setIsLoading(true)
     setError(null)
+    const startTime = performance.now()
     
     try {
       const response = await fetch('http://localhost:8008/query', {
@@ -138,8 +141,61 @@ const ChatbotTester: React.FC = () => {
       }
 
       const data = await response.json()
+      const endTime = performance.now()
+      const processingTime = (endTime - startTime) / 1000 // Convert to seconds
+      
+      // Map ChatSource to ChunkDetail format for history storage
+      const historyChunks: ChunkDetail[] = data.sources.map((source: ChatSource) => ({
+        chunk_id: source.chunk_id,
+        content: source.content,
+        similarity: source.similarity,
+        metadata: source.metadata,
+        korean_features: source.metadata.korean_features || {}
+      }))
+
+      // Save to test history
+      try {
+        const savedResult = TestHistoryStorage.saveTestResult({
+          query: data.query,
+          response: data.response,
+          sources: historyChunks,
+          korean_analysis: data.korean_analysis,
+          processing_time: data.processing_time || processingTime,
+          similarity_threshold: similarityThreshold,
+          max_chunks: maxChunks,
+          status: 'success'
+        })
+        console.log('Test result saved to history:', savedResult.id)
+      } catch (historyError) {
+        console.error('Failed to save test result to history:', historyError)
+      }
+
       setTestResult(data)
     } catch (err) {
+      const endTime = performance.now()
+      const processingTime = (endTime - startTime) / 1000
+      
+      // Save error to test history
+      try {
+        TestHistoryStorage.saveTestResult({
+          query: query,
+          response: `오류 발생: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+          sources: [],
+          korean_analysis: {
+            original_query: query,
+            processed_query: query,
+            tokenized: [],
+            keywords: []
+          },
+          processing_time: processingTime,
+          similarity_threshold: similarityThreshold,
+          max_chunks: maxChunks,
+          status: 'error'
+        })
+      } catch (historyError) {
+        console.error('Failed to save error to history:', historyError)
+      }
+
       setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.')
     } finally {
       setIsLoading(false)

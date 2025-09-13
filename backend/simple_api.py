@@ -652,7 +652,7 @@ class AIService:
                 print(f"🕸️ [MULTI-RAG] Attempting Graph RAG...")
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     graph_response = await client.post(
-                        "http://localhost:8010/query",
+                        "http://localhost:8008/query",
                         json={"query": message, "user_id": user_id}
                     )
                     if graph_response.status_code == 200:
@@ -1617,7 +1617,7 @@ async def upload_document_default(
     if KOREAN_RAG_AVAILABLE:
         try:
             print(f"🇰🇷 [RAG-AUTO] Sending document to Korean RAG service for vectorization")
-            import aiohttp
+            import httpx
             
             # 처리된 텍스트 콘텐츠를 Korean RAG 서비스로 전송
             text_content = processed_content.decode('utf-8') if isinstance(processed_content, bytes) else str(processed_content)
@@ -1636,7 +1636,7 @@ async def upload_document_default(
                 "document_id": doc_id
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with httpx.AsyncClient() as client:
                 # Send to Korean RAG Orchestrator (Port 8008)
                 orchestrator_payload = {
                     "user_id": user_id,
@@ -1651,22 +1651,22 @@ async def upload_document_default(
                         "document_id": doc_id
                     }
                 }
-                async with session.post(
+                response = await client.post(
                     "http://localhost:8008/process_document",
                     json=orchestrator_payload,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    if response.status == 200:
-                        rag_response = await response.json()
-                        if rag_response.get("status") == "success":
-                            rag_processing_status = "vectorization_started"
-                            print(f"✅ [KOREAN-RAG] Document successfully sent to Korean RAG Orchestrator")
-                            print(f"🔄 [KOREAN-RAG] Chunks processed: {rag_response.get('chunks_processed', 0)}")
-                            print(f"📊 [KOREAN-RAG] Chunks stored: {rag_response.get('chunks_stored', 0)}")
-                        else:
-                            print(f"⚠️ [KOREAN-RAG] Korean RAG Orchestrator returned error")
+                    timeout=30.0
+                )
+                if response.status_code == 200:
+                    rag_response = await response.json()
+                    if rag_response.get("status") == "success":
+                        rag_processing_status = "vectorization_started"
+                        print(f"✅ [KOREAN-RAG] Document successfully sent to Korean RAG Orchestrator")
+                        print(f"🔄 [KOREAN-RAG] Chunks processed: {rag_response.get('chunks_processed', 0)}")
+                        print(f"📊 [KOREAN-RAG] Chunks stored: {rag_response.get('chunks_stored', 0)}")
                     else:
-                        print(f"⚠️ [KOREAN-RAG] Failed to send to Korean RAG Orchestrator: HTTP {response.status}")
+                        print(f"⚠️ [KOREAN-RAG] Korean RAG Orchestrator returned error")
+                else:
+                    print(f"⚠️ [KOREAN-RAG] Failed to send to Korean RAG Orchestrator: HTTP {response.status_code}")
         except Exception as e:
             print(f"❌ [RAG-AUTO] Error sending document to Korean RAG service: {e}")
             rag_processing_status = "rag_error"
@@ -1811,44 +1811,44 @@ async def get_user_documents(user_id: str, limit: int = 20, offset: int = 0):
     if KOREAN_RAG_AVAILABLE:
         try:
             print(f"🇰🇷 [KOREAN-RAG] Fetching documents from Korean RAG service")
-            import aiohttp
+            import httpx
             
-            async with aiohttp.ClientSession() as session:
-                async with session.get("http://localhost:8010/documents") as response:
-                    if response.status == 200:
-                        rag_response = await response.json()
-                        if rag_response.get("success") and "data" in rag_response:
-                            rag_docs = rag_response["data"].get("documents", [])
-                            print(f"🇰🇷 [KOREAN-RAG] Found {len(rag_docs)} documents from Korean RAG service")
+            async with httpx.AsyncClient() as client:
+                response = await client.get("http://localhost:8008/documents")
+                if response.status_code == 200:
+                    rag_response = await response.json()
+                    if rag_response.get("success") and "data" in rag_response:
+                        rag_docs = rag_response["data"].get("documents", [])
+                        print(f"🇰🇷 [KOREAN-RAG] Found {len(rag_docs)} documents from Korean RAG service")
+                        
+                        # Korean RAG 문서를 표준 형식으로 변환
+                        for doc in rag_docs:
+                            original_metadata = doc.get("metadata", {}).get("original_metadata", {})
+                            chunk_count = doc.get("chunk_count", 1)
                             
-                            # Korean RAG 문서를 표준 형식으로 변환
-                            for doc in rag_docs:
-                                original_metadata = doc.get("metadata", {}).get("original_metadata", {})
-                                chunk_count = doc.get("chunk_count", 1)
-                                
-                                # 청킹, 임베딩, 벡터화 상태 계산
-                                chunking_status = "completed" if chunk_count > 0 else "pending"
-                                embedding_status = "completed" if doc.get("embedding_count", 0) > 0 else chunking_status
-                                vectorization_status = "completed" if doc.get("vector_count", 0) > 0 else embedding_status
-                                
-                                # 처리 진행률 계산 (각 단계 33.33%)
-                                progress = 0
-                                if chunking_status == "completed": progress += 33.33
-                                if embedding_status == "completed": progress += 33.33  
-                                if vectorization_status == "completed": progress += 33.34
-                                
-                                # 처리 시간 계산 (생성일자 기준)
-                                from datetime import datetime
-                                created_time = datetime.fromisoformat(doc.get("created_at", datetime.now().isoformat()).replace('Z', '+00:00'))
-                                current_time = datetime.now()
-                                time_elapsed = (current_time - created_time.replace(tzinfo=None)).total_seconds()
-                                
-                                # 각 단계별 예상 시간 (청킹: 2초, 임베딩: 5초, 벡터화: 3초)
-                                chunking_time = 2 if chunking_status == "completed" else min(time_elapsed, 2)
-                                embedding_time = 5 if embedding_status == "completed" else (min(time_elapsed - 2, 5) if time_elapsed > 2 else 0)
-                                vectorization_time = 3 if vectorization_status == "completed" else (min(time_elapsed - 7, 3) if time_elapsed > 7 else 0)
-                                
-                                all_docs.append({
+                            # 청킹, 임베딩, 벡터화 상태 계산
+                            chunking_status = "completed" if chunk_count > 0 else "pending"
+                            embedding_status = "completed" if doc.get("embedding_count", 0) > 0 else chunking_status
+                            vectorization_status = "completed" if doc.get("vector_count", 0) > 0 else embedding_status
+                            
+                            # 처리 진행률 계산 (각 단계 33.33%)
+                            progress = 0
+                            if chunking_status == "completed": progress += 33.33
+                            if embedding_status == "completed": progress += 33.33  
+                            if vectorization_status == "completed": progress += 33.34
+                            
+                            # 처리 시간 계산 (생성일자 기준)
+                            from datetime import datetime
+                            created_time = datetime.fromisoformat(doc.get("created_at", datetime.now().isoformat()).replace('Z', '+00:00'))
+                            current_time = datetime.now()
+                            time_elapsed = (current_time - created_time.replace(tzinfo=None)).total_seconds()
+                            
+                            # 각 단계별 예상 시간 (청킹: 2초, 임베딩: 5초, 벡터화: 3초)
+                            chunking_time = 2 if chunking_status == "completed" else min(time_elapsed, 2)
+                            embedding_time = 5 if embedding_status == "completed" else (min(time_elapsed - 2, 5) if time_elapsed > 2 else 0)
+                            vectorization_time = 3 if vectorization_status == "completed" else (min(time_elapsed - 7, 3) if time_elapsed > 7 else 0)
+                            
+                            all_docs.append({
                                     "id": doc.get("document_id"),
                                     "filename": original_metadata.get("filename", "Unknown"),
                                     "title": original_metadata.get("title", doc.get("title", "제목 없음")),
@@ -1891,8 +1891,8 @@ async def get_user_documents(user_id: str, limit: int = 20, offset: int = 0):
                                         "max_context_chunks": 5
                                     }
                                 })
-                    else:
-                        print(f"⚠️ [KOREAN-RAG] Failed to fetch documents: HTTP {response.status}")
+                else:
+                    print(f"⚠️ [KOREAN-RAG] Failed to fetch documents: HTTP {response.status_code}")
         except Exception as e:
             print(f"❌ [KOREAN-RAG] Error fetching documents from Korean RAG service: {e}")
     
@@ -1993,10 +1993,10 @@ async def get_document_content(user_id: str, document_id: str):
             # Korean RAG Service에서도 조회 시도
             if KOREAN_RAG_AVAILABLE:
                 try:
-                    import aiohttp
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(f"http://localhost:8009/documents/{document_id}") as response:
-                            if response.status == 200:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(f"http://localhost:8008/documents/{document_id}")
+                        if response.status_code == 200:
                                 rag_doc = await response.json()
                                 if rag_doc.get("success") and rag_doc.get("document"):
                                     doc_data = rag_doc["document"]
@@ -2085,10 +2085,10 @@ async def check_duplicate_document(user_id: str, filename: str):
         # Korean RAG Service에서도 중복 검사
         if not duplicate_found and KOREAN_RAG_AVAILABLE:
             try:
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f"http://localhost:8009/documents/{user_id}") as response:
-                        if response.status == 200:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(f"http://localhost:8008/documents/{user_id}")
+                    if response.status_code == 200:
                             rag_response = await response.json()
                             if rag_response.get("documents"):
                                 for rag_doc in rag_response["documents"]:
@@ -2171,11 +2171,11 @@ async def get_document_chunks(user_id: str, document_id: str):
             # Korean RAG Service에서 실제 청크 내용 조회
             if KOREAN_RAG_AVAILABLE:
                 try:
-                    import aiohttp
-                    async with aiohttp.ClientSession() as session:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
                         # Korean RAG Service의 새로운 chunks API를 사용하여 실제 청크 내용 가져오기
-                        async with session.get(f"http://localhost:8009/documents/{document_id}/chunks") as response:
-                            if response.status == 200:
+                        response = await client.get(f"http://localhost:8008/documents/{document_id}/chunks")
+                        if response.status_code == 200:
                                 chunks_result = await response.json()
                                 if chunks_result.get("success") and chunks_result.get("data"):
                                     chunks_data = chunks_result["data"]
@@ -2206,7 +2206,7 @@ async def get_document_chunks(user_id: str, document_id: str):
                         
                         # 청크 API가 실패한 경우, 문서 정보만 반환 (fallback)
                         print(f"⚠️ [DOC-CHUNKS] Korean RAG chunks API failed, falling back to placeholder")
-                        async with session.get(f"http://localhost:8009/documents") as response:
+                        async with session.get(f"http://localhost:8008/documents") as response:
                             if response.status == 200:
                                 docs_result = await response.json()
                                 if docs_result.get("success"):

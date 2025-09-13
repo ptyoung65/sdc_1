@@ -203,14 +203,14 @@ class KoreanEmbeddingService:
         self.text_processor = KoreanTextProcessor()
         self.docling_client = DoclingClient()
         
-        # TF-IDF 벡터라이저
+        # TF-IDF 벡터라이저 (단일 문서 처리 가능하도록 설정)
         self.vectorizer = TfidfVectorizer(
             max_features=embedding_dim,
             tokenizer=self.text_processor.tokenize,
             token_pattern=None,  # Custom tokenizer 사용
             ngram_range=(1, 2),  # Unigram + Bigram
             min_df=1,
-            max_df=0.95,
+            max_df=1.0,  # 단일 문서에서도 작동하도록 1.0으로 설정
             sublinear_tf=True,  # log(tf) 사용
             use_idf=True
         )

@@ -292,7 +292,7 @@ async def rag_query(request: RAGQueryRequest):
         
         # 5. LLM 응답 생성 (Korean RAG 서비스 연결 시)
         response_text = "문서 검색이 완료되었지만 응답 생성 서비스가 연결되지 않았습니다."
-        if service_status.korean_rag_ready and context_text:
+        if service_status.korean_rag_ready:
             try:
                 async with httpx.AsyncClient() as client:
                     llm_data = {
@@ -349,6 +349,72 @@ async def get_stats():
         },
         "version": "2.0.0-korean-optimized"
     }
+
+@app.get("/documents")
+async def get_all_documents():
+    """모든 문서 조회"""
+    try:
+        if service_status.milvus_connected:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{MILVUS_SERVICE_URL}/stats", timeout=5.0)
+                if response.status_code == 200:
+                    stats = response.json()
+                    return {
+                        "documents": [],
+                        "total_vectors": stats.get("milvus", {}).get("total_vectors", 0),
+                        "status": "connected"
+                    }
+        return {"documents": [], "total_vectors": 0, "status": "disconnected"}
+    except Exception as e:
+        logger.error(f"문서 조회 실패: {e}")
+        return {"documents": [], "total_vectors": 0, "status": "error"}
+
+@app.get("/documents/{user_id}")
+async def get_user_documents(user_id: str):
+    """사용자별 문서 조회"""
+    try:
+        # Korean RAG Service에서 문서 목록 조회 시도
+        if service_status.korean_rag_connected:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{KOREAN_RAG_SERVICE_URL}/documents/{user_id}", timeout=5.0)
+                if response.status_code == 200:
+                    return response.json()
+        
+        # 폴백: 빈 문서 목록 반환
+        return {"documents": [], "user_id": user_id, "total": 0}
+    except Exception as e:
+        logger.error(f"사용자 문서 조회 실패: {e}")
+        return {"documents": [], "user_id": user_id, "total": 0}
+
+@app.get("/documents/{document_id}")
+async def get_document_details(document_id: str):
+    """문서 상세 정보 조회"""
+    try:
+        if service_status.korean_rag_connected:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{KOREAN_RAG_SERVICE_URL}/documents/{document_id}", timeout=5.0)
+                if response.status_code == 200:
+                    return response.json()
+        
+        return {"document_id": document_id, "status": "not_found"}
+    except Exception as e:
+        logger.error(f"문서 상세 조회 실패: {e}")
+        return {"document_id": document_id, "status": "error"}
+
+@app.get("/documents/{document_id}/chunks")
+async def get_document_chunks(document_id: str):
+    """문서 청크 조회"""
+    try:
+        if service_status.korean_rag_connected:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{KOREAN_RAG_SERVICE_URL}/documents/{document_id}/chunks", timeout=5.0)
+                if response.status_code == 200:
+                    return response.json()
+        
+        return {"chunks": [], "document_id": document_id, "total": 0}
+    except Exception as e:
+        logger.error(f"문서 청크 조회 실패: {e}")
+        return {"chunks": [], "document_id": document_id, "total": 0}
 
 if __name__ == "__main__":
     print("🚀 Korean RAG Orchestrator 시작 중...")

@@ -8,7 +8,7 @@ import asyncio
 import logging
 import json
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 # FastAPI 및 기본 의존성
 from fastapi import FastAPI, HTTPException
@@ -37,8 +37,8 @@ class KoreanAnalysis(BaseModel):
 
 class GenerateRequest(BaseModel):
     query: str
-    context: str
-    korean_analysis: Optional[KoreanAnalysis] = None
+    context: str = ""
+    korean_analysis: Optional[Union[KoreanAnalysis, Dict[str, Any]]] = None
     user_id: Optional[str] = "default"
 
 class GenerateResponse(BaseModel):
@@ -261,8 +261,7 @@ async def generate_response(request: GenerateRequest):
         if not request.query.strip():
             raise HTTPException(status_code=400, detail="쿼리가 비어있습니다.")
         
-        if not request.context.strip():
-            raise HTTPException(status_code=400, detail="컨텍스트가 비어있습니다.")
+        # 컨텍스트는 빈 문자열도 허용 (일반 질의응답 모드)
         
         # Gemini API로 응답 생성
         response = await gemini_service.generate_response(request)
