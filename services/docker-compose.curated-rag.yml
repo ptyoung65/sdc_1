@@ -1,0 +1,222 @@
+# AI-Curated RAG Pipeline Docker Compose Configuration
+version: '3.8'
+
+networks:
+  curated-rag-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  curated-rag-redis-data:
+  curated-rag-postgres-data:
+  ollama-data:
+
+services:
+  # AI Model Service
+  ai-model-service:
+    build:
+      context: ./ai-model-service
+      dockerfile: Containerfile
+    container_name: ai-model-service
+    ports:
+      - "8007:8007"
+    environment:
+      - PYTHONPATH=/app
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-your-openai-key}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-your-anthropic-key}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-your-google-key}
+      - OLLAMA_HOST=ollama
+      - OLLAMA_PORT=11434
+    networks:
+      - curated-rag-network
+    depends_on:
+      - ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Curation Service
+  curation-service:
+    build:
+      context: ./curation-service
+      dockerfile: Containerfile
+    container_name: curation-service
+    ports:
+      - "8006:8006"
+    environment:
+      - PYTHONPATH=/app
+      - VECTOR_DB_URL=http://vector-db-service:8003
+      - AI_MODEL_URL=http://ai-model-service:8007
+      - ORCHESTRATOR_URL=http://rag-orchestrator:8008
+      - REDIS_URL=redis://curated-rag-redis:6379
+    networks:
+      - curated-rag-network
+    depends_on:
+      - curated-rag-redis
+      - ai-model-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # RAG Orchestrator
+  rag-orchestrator:
+    build:
+      context: ./rag-orchestrator
+      dockerfile: Containerfile
+    container_name: rag-orchestrator
+    ports:
+      - "8008:8008"
+    environment:
+      - PYTHONPATH=/app
+      - CURATION_SERVICE_URL=http://curation-service:8006
+      - AI_MODEL_URL=http://ai-model-service:8007
+      - VECTOR_DB_URL=http://vector-db-service:8003
+      - DOCUMENT_PROCESSING_URL=http://document-processing-service:8004
+      - EVALUATION_URL=http://rag-evaluator:8006
+      - REDIS_URL=redis://curated-rag-redis:6379
+    networks:
+      - curated-rag-network
+    depends_on:
+      - curation-service
+      - ai-model-service
+      - curated-rag-redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Curation Dashboard
+  curation-dashboard:
+    build:
+      context: ./curation-dashboard
+      dockerfile: Containerfile
+    container_name: curation-dashboard
+    ports:
+      - "3003:3002"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_CURATION_SERVICE_URL=http://localhost:8006
+      - NEXT_PUBLIC_ORCHESTRATOR_URL=http://localhost:8008
+      - NEXT_PUBLIC_AI_MODEL_URL=http://localhost:8007
+    networks:
+      - curated-rag-network
+    depends_on:
+      - curation-service
+      - rag-orchestrator
+      - ai-model-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Ollama Local LLM Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    networks:
+      - curated-rag-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    # Pull models on startup
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /bin/ollama serve &
+        sleep 10
+        /bin/ollama pull llama3
+        /bin/ollama pull mistral
+        wait
+
+  # Redis Cache
+  curated-rag-redis:
+    image: redis:7-alpine
+    container_name: curated-rag-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - curated-rag-redis-data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 1gb
+      --maxmemory-policy allkeys-lru
+    networks:
+      - curated-rag-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # PostgreSQL for Orchestrator Analytics
+  curated-rag-postgres:
+    image: postgres:15-alpine
+    container_name: curated-rag-postgres
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_DB: curated_rag
+      POSTGRES_USER: curated_rag_user
+      POSTGRES_PASSWORD: curated_rag_password
+    volumes:
+      - curated-rag-postgres-data:/var/lib/postgresql/data
+      - ./curated-rag-postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - curated-rag-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U curated_rag_user -d curated_rag"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy for Curated RAG System
+  curated-rag-proxy:
+    image: nginx:alpine
+    container_name: curated-rag-proxy
+    ports:
+      - "8091:80"
+    volumes:
+      - ./nginx-curated-rag.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - curated-rag-network
+    depends_on:
+      - curation-service
+      - rag-orchestrator
+      - ai-model-service
+      - curation-dashboard
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped

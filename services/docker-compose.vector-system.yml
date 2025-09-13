@@ -1,0 +1,213 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for permission management
+  permission-db:
+    image: postgres:16
+    container_name: permission-db
+    environment:
+      POSTGRES_DB: permissions
+      POSTGRES_USER: permission_user
+      POSTGRES_PASSWORD: permission_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - permission_data:/var/lib/postgresql/data
+    networks:
+      - vector-system-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U permission_user -d permissions"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Milvus vector database components
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - milvus_etcd:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    networks:
+      - vector-system-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9001:9001"
+      - "9000:9000"
+    volumes:
+      - milvus_minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    networks:
+      - vector-system-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.3.4
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+    networks:
+      - vector-system-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+
+  # Permission Management Service
+  permission-service:
+    build:
+      context: ./permission-service
+      dockerfile: Containerfile
+    container_name: permission-service
+    environment:
+      - DATABASE_URL=postgresql://permission_user:permission_password@permission-db:5432/permissions
+      - JWT_SECRET_KEY=your-super-secret-jwt-key
+      - LOG_LEVEL=INFO
+    ports:
+      - "8005:8005"
+    depends_on:
+      permission-db:
+        condition: service_healthy
+    networks:
+      - vector-system-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Document Processing Service
+  document-processing-service:
+    build:
+      context: ./document-processing-service
+      dockerfile: Containerfile
+    container_name: document-processing-service
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8004:8004"
+    networks:
+      - vector-system-network
+    volumes:
+      - ./document-processing-service/uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Vector Database Service
+  vector-db-service:
+    build:
+      context: ./vector-db-service
+      dockerfile: Containerfile
+    container_name: vector-db-service
+    environment:
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - PERMISSION_SERVICE_URL=http://permission-service:8005
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8003:8003"
+    depends_on:
+      milvus:
+        condition: service_healthy
+      permission-service:
+        condition: service_healthy
+    networks:
+      - vector-system-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: vector-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - vector_redis:/data
+    networks:
+      - vector-system-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Nginx reverse proxy
+  vector-proxy:
+    image: nginx:alpine
+    container_name: vector-proxy
+    ports:
+      - "8090:80"
+    volumes:
+      - ./nginx/vector-system.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - vector-db-service
+      - document-processing-service
+      - permission-service
+    networks:
+      - vector-system-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  permission_data:
+    driver: local
+  milvus_etcd:
+    driver: local
+  milvus_minio:
+    driver: local
+  milvus_data:
+    driver: local
+  vector_redis:
+    driver: local
+
+networks:
+  vector-system-network:
+    driver: bridge
+    name: vector-system-network

@@ -4,6 +4,7 @@ import './globals.css'
 import { cn } from '@/lib/utils'
 import { ThemeProvider } from '@/components/theme-provider'
 import { ClientToaster } from '@/components/client-toaster'
+import { HydrationGuard } from '@/components/hydration-guard'
 
 const inter = Inter({ 
   subsets: ['latin'],
@@ -50,23 +51,33 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ko" suppressHydrationWarning>
+      <head>
+        <meta name="color-scheme" content="light dark" />
+        <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+      </head>
       <body className={cn(
         'min-h-screen bg-background font-sans antialiased',
         inter.variable,
         notoSansKR.variable,
         jetbrainsMono.variable
-      )}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
-          <div className="relative flex min-h-screen flex-col">
-            <div className="flex-1">{children}</div>
+      )} suppressHydrationWarning>
+        <HydrationGuard fallback={
+          <div className="min-h-screen bg-background flex items-center justify-center">
+            <div className="animate-pulse text-muted-foreground">Loading...</div>
           </div>
-          <ClientToaster />
-        </ThemeProvider>
+        }>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="system"
+            enableSystem
+            disableTransitionOnChange
+          >
+            <div className="relative flex min-h-screen flex-col">
+              <div className="flex-1">{children}</div>
+            </div>
+            <ClientToaster />
+          </ThemeProvider>
+        </HydrationGuard>
       </body>
     </html>
   )

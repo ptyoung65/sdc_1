@@ -1,0 +1,236 @@
+# AI-Curated RAG Pipeline Makefile
+COMPOSE_FILE = docker-compose.curated-rag.yml
+PROJECT_NAME = curated-rag-system
+
+# Colors for output
+RED = \033[0;31m
+GREEN = \033[0;32m
+YELLOW = \033[1;33m
+BLUE = \033[0;34m
+PURPLE = \033[0;35m
+CYAN = \033[0;36m
+WHITE = \033[1;37m
+NC = \033[0m # No Color
+
+.PHONY: help build up down health logs test clean status shell-* restart scale
+
+help: ## Show this help message
+	@echo "$(CYAN)AI-Curated RAG Pipeline Management$(NC)"
+	@echo "======================================"
+	@echo ""
+	@echo "$(WHITE)Available commands:$(NC)"
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+
+build: ## Build all services
+	@echo "$(YELLOW)Building AI-Curated RAG services...$(NC)"
+	@docker-compose -f $(COMPOSE_FILE) build --no-cache
+	@echo "$(GREEN)✅ Build completed$(NC)"
+
+up: ## Start all services
+	@echo "$(YELLOW)Starting AI-Curated RAG system...$(NC)"
+	@docker-compose -f $(COMPOSE_FILE) up -d
+	@echo "$(GREEN)✅ All services started$(NC)"
+	@echo ""
+	@echo "$(CYAN)Service URLs:$(NC)"
+	@echo "  🎯 RAG Orchestrator:    http://localhost:8008"
+	@echo "  🧠 AI Model Service:    http://localhost:8007"
+	@echo "  🎨 Curation Service:    http://localhost:8006"
+	@echo "  📊 Dashboard:           http://localhost:3003"
+	@echo "  🌐 Main Proxy:          http://localhost:8091"
+	@echo ""
+
+down: ## Stop all services
+	@echo "$(YELLOW)Stopping AI-Curated RAG system...$(NC)"
+	@docker-compose -f $(COMPOSE_FILE) down
+	@echo "$(GREEN)✅ All services stopped$(NC)"
+
+health: ## Check health of all services
+	@echo "$(CYAN)Checking service health...$(NC)"
+	@echo ""
+	@services=("rag-orchestrator:8008" "ai-model-service:8007" "curation-service:8006" "curation-dashboard:3003"); \
+	for service in $${services[@]}; do \
+		name=$$(echo $$service | cut -d: -f1); \
+		port=$$(echo $$service | cut -d: -f2); \
+		if curl -s -f "http://localhost:$$port/health" > /dev/null 2>&1; then \
+			echo "  $(GREEN)✅ $$name$(NC) - Healthy"; \
+		else \
+			echo "  $(RED)❌ $$name$(NC) - Unhealthy"; \
+		fi; \
+	done
+	@echo ""
+	@echo "$(CYAN)Checking infrastructure...$(NC)"
+	@if docker-compose -f $(COMPOSE_FILE) exec curated-rag-redis redis-cli ping > /dev/null 2>&1; then \
+		echo "  $(GREEN)✅ Redis$(NC) - Connected"; \
+	else \
+		echo "  $(RED)❌ Redis$(NC) - Connection failed"; \
+	fi
+	@if docker-compose -f $(COMPOSE_FILE) exec curated-rag-postgres pg_isready -U curated_rag_user -d curated_rag > /dev/null 2>&1; then \
+		echo "  $(GREEN)✅ PostgreSQL$(NC) - Ready"; \
+	else \
+		echo "  $(RED)❌ PostgreSQL$(NC) - Not ready"; \
+	fi
+	@if curl -s -f "http://localhost:11434/api/version" > /dev/null 2>&1; then \
+		echo "  $(GREEN)✅ Ollama$(NC) - Running"; \
+	else \
+		echo "  $(RED)❌ Ollama$(NC) - Not responding"; \
+	fi
+
+logs: ## Show logs from all services
+	@docker-compose -f $(COMPOSE_FILE) logs -f
+
+logs-orchestrator: ## Show RAG orchestrator logs
+	@docker-compose -f $(COMPOSE_FILE) logs -f rag-orchestrator
+
+logs-curation: ## Show curation service logs
+	@docker-compose -f $(COMPOSE_FILE) logs -f curation-service
+
+logs-ai-models: ## Show AI model service logs
+	@docker-compose -f $(COMPOSE_FILE) logs -f ai-model-service
+
+logs-dashboard: ## Show dashboard logs
+	@docker-compose -f $(COMPOSE_FILE) logs -f curation-dashboard
+
+status: ## Show status of all services
+	@echo "$(CYAN)Service Status$(NC)"
+	@echo "=============="
+	@docker-compose -f $(COMPOSE_FILE) ps
+
+restart: ## Restart all services
+	@echo "$(YELLOW)Restarting AI-Curated RAG system...$(NC)"
+	@docker-compose -f $(COMPOSE_FILE) restart
+	@echo "$(GREEN)✅ All services restarted$(NC)"
+
+restart-orchestrator: ## Restart RAG orchestrator
+	@docker-compose -f $(COMPOSE_FILE) restart rag-orchestrator
+	@echo "$(GREEN)✅ RAG orchestrator restarted$(NC)"
+
+restart-curation: ## Restart curation service
+	@docker-compose -f $(COMPOSE_FILE) restart curation-service
+	@echo "$(GREEN)✅ Curation service restarted$(NC)"
+
+restart-ai-models: ## Restart AI model service
+	@docker-compose -f $(COMPOSE_FILE) restart ai-model-service
+	@echo "$(GREEN)✅ AI model service restarted$(NC)"
+
+scale-orchestrator: ## Scale RAG orchestrator (usage: make scale-orchestrator n=3)
+	@docker-compose -f $(COMPOSE_FILE) up -d --scale rag-orchestrator=$(n)
+	@echo "$(GREEN)✅ RAG orchestrator scaled to $(n) instances$(NC)"
+
+test: ## Run integration tests
+	@echo "$(YELLOW)Running integration tests...$(NC)"
+	@python3 test-curated-rag.py
+	@echo "$(GREEN)✅ Tests completed$(NC)"
+
+test-curation: ## Test curation service
+	@echo "$(CYAN)Testing curation service...$(NC)"
+	@curl -X POST "http://localhost:8006/api/v1/curate" \
+		-H "Content-Type: application/json" \
+		-d '{"query": "artificial intelligence", "strategy": "hybrid", "max_results": 5}' \
+		| jq . 2>/dev/null || echo "$(RED)❌ Curation test failed$(NC)"
+
+test-orchestrator: ## Test RAG orchestrator
+	@echo "$(CYAN)Testing RAG orchestrator...$(NC)"
+	@curl -X POST "http://localhost:8008/api/v1/process" \
+		-H "Content-Type: application/json" \
+		-d '{"query": "What is machine learning?", "mode": "curated"}' \
+		| jq . 2>/dev/null || echo "$(RED)❌ Orchestrator test failed$(NC)"
+
+test-ai-models: ## Test AI model service
+	@echo "$(CYAN)Testing AI model service...$(NC)"
+	@curl -X POST "http://localhost:8007/api/v1/analyze_query" \
+		-H "Content-Type: application/json" \
+		-d '{"query": "machine learning algorithms"}' \
+		| jq . 2>/dev/null || echo "$(RED)❌ AI model test failed$(NC)"
+
+shell-orchestrator: ## Access RAG orchestrator shell
+	@docker-compose -f $(COMPOSE_FILE) exec rag-orchestrator /bin/bash
+
+shell-curation: ## Access curation service shell
+	@docker-compose -f $(COMPOSE_FILE) exec curation-service /bin/bash
+
+shell-ai-models: ## Access AI model service shell
+	@docker-compose -f $(COMPOSE_FILE) exec ai-model-service /bin/bash
+
+shell-redis: ## Access Redis CLI
+	@docker-compose -f $(COMPOSE_FILE) exec curated-rag-redis redis-cli
+
+shell-postgres: ## Access PostgreSQL CLI
+	@docker-compose -f $(COMPOSE_FILE) exec curated-rag-postgres psql -U curated_rag_user -d curated_rag
+
+metrics: ## Show performance metrics
+	@echo "$(CYAN)Performance Metrics$(NC)"
+	@echo "==================="
+	@echo ""
+	@echo "$(WHITE)Curation Service:$(NC)"
+	@curl -s "http://localhost:8006/api/v1/metrics" | jq . 2>/dev/null || echo "  $(RED)❌ Unavailable$(NC)"
+	@echo ""
+	@echo "$(WHITE)RAG Orchestrator:$(NC)"
+	@curl -s "http://localhost:8008/api/v1/performance" | jq . 2>/dev/null || echo "  $(RED)❌ Unavailable$(NC)"
+	@echo ""
+	@echo "$(WHITE)AI Model Service:$(NC)"
+	@curl -s "http://localhost:8007/api/v1/performance" | jq . 2>/dev/null || echo "  $(RED)❌ Unavailable$(NC)"
+
+benchmark: ## Run performance benchmark
+	@echo "$(YELLOW)Running performance benchmark...$(NC)"
+	@for i in {1..10}; do \
+		echo -n "Request $$i: "; \
+		start=$$(date +%s%N); \
+		curl -s -X POST "http://localhost:8008/api/v1/process" \
+			-H "Content-Type: application/json" \
+			-d '{"query": "machine learning benchmark test '$$i'", "mode": "curated"}' > /dev/null; \
+		end=$$(date +%s%N); \
+		echo "$$((($${end}-$${start})/1000000))ms"; \
+	done
+
+monitor: ## Monitor system resources
+	@watch -n 2 'echo "=== Container Stats ==="; docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" $(shell docker-compose -f $(COMPOSE_FILE) ps -q)'
+
+clean: ## Clean up containers, volumes, and networks
+	@echo "$(YELLOW)Cleaning up AI-Curated RAG system...$(NC)"
+	@docker-compose -f $(COMPOSE_FILE) down -v --remove-orphans
+	@docker system prune -f
+	@echo "$(GREEN)✅ Cleanup completed$(NC)"
+
+backup: ## Backup data volumes
+	@echo "$(YELLOW)Creating backup...$(NC)"
+	@timestamp=$$(date +%Y%m%d_%H%M%S); \
+	docker run --rm -v curated-rag-redis-data:/data -v $$(pwd):/backup alpine tar czf /backup/curated-rag-backup_$$timestamp.tar.gz /data
+	@echo "$(GREEN)✅ Backup created$(NC)"
+
+update: ## Update service images
+	@echo "$(YELLOW)Updating service images...$(NC)"
+	@docker-compose -f $(COMPOSE_FILE) pull
+	@docker-compose -f $(COMPOSE_FILE) build --no-cache
+	@echo "$(GREEN)✅ Images updated$(NC)"
+
+dev: ## Start development environment
+	@echo "$(YELLOW)Starting development environment...$(NC)"
+	@docker-compose -f $(COMPOSE_FILE) up -d curated-rag-redis curated-rag-postgres ollama
+	@echo "$(GREEN)✅ Development environment ready$(NC)"
+	@echo ""
+	@echo "$(CYAN)You can now run services locally:$(NC)"
+	@echo "  cd curation-service && python main.py"
+	@echo "  cd rag-orchestrator && python main.py"
+	@echo "  cd ai-model-service && python main.py"
+	@echo "  cd curation-dashboard && npm run dev"
+
+info: ## Show system information
+	@echo "$(CYAN)AI-Curated RAG System Information$(NC)"
+	@echo "=================================="
+	@echo ""
+	@echo "$(WHITE)Service Architecture:$(NC)"
+	@echo "  🎯 RAG Orchestrator - Intelligent pipeline orchestration"
+	@echo "  🧠 AI Model Service - Multi-model AI capabilities"
+	@echo "  🎨 Curation Service - Content quality and relevance"
+	@echo "  📊 Dashboard - Real-time monitoring and testing"
+	@echo ""
+	@echo "$(WHITE)Network:$(NC) curated-rag-network (172.20.0.0/16)"
+	@echo "$(WHITE)Volumes:$(NC) curated-rag-redis-data, curated-rag-postgres-data, ollama-data"
+	@echo ""
+	@echo "$(WHITE)External Dependencies:$(NC)"
+	@echo "  - Vector DB Service (from vector-system)"
+	@echo "  - Document Processing Service (from vector-system)"
+	@echo "  - RAG Evaluator (from rag-system)"
+	@echo ""
+	@echo "$(YELLOW)Note: Make sure vector-system and rag-system are running for full functionality$(NC)"

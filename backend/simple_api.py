@@ -35,7 +35,7 @@ except ImportError as e:
 
 # Alternative document processor import
 try:
-    from app.services.document.alternative_processor import AlternativeDocumentProcessor
+    from app.services.document.alternative_processor import AlternativeProcessor
     ALT_PROCESSOR_AVAILABLE = True
     print("📄 [ALT-PROC] Alternative document processor loaded - local Python library processing enabled!")
 except ImportError as e:
@@ -1538,8 +1538,8 @@ async def upload_document_default(
             # Try alternative processor as fallback
             if ALT_PROCESSOR_AVAILABLE and file_extension in structured_formats:
                 try:
-                    alt_processor = AlternativeDocumentProcessor()
-                    alt_result = await alt_processor.process_document(temp_file_path, file.filename)
+                    alt_processor = AlternativeProcessor()
+                    alt_result = await alt_processor.process_document(file_content, file.filename)
                     
                     if alt_result.get('text_content'):
                         processed_content = alt_result['text_content'].encode('utf-8')
@@ -1569,8 +1569,8 @@ async def upload_document_default(
                     temp_file.write(file_content)
                 
                 # Process with Alternative Processor
-                alt_processor = AlternativeDocumentProcessor()
-                alt_result = await alt_processor.process_document(temp_file_path, file.filename)
+                alt_processor = AlternativeProcessor()
+                alt_result = await alt_processor.process_document(file_content, file.filename)
                 
                 # Use extracted text content
                 if alt_result.get('text_content'):

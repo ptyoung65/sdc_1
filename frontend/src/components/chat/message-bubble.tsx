@@ -230,7 +230,7 @@ export function MessageBubble({
           {false && isAssistant && message.metadata?.hasMultiRAG && message.metadata?.ragResults && (
             <div className="mt-3 pt-3 border-t border-border/50">
               <MultiRAGResponse
-                ragResults={message.metadata.ragResults as RAGResult[]}
+                ragResults={message.metadata?.ragResults as RAGResult[] || []}
                 finalResponse={message.content}
                 className="text-xs"
               />

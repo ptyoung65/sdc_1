@@ -1,6 +1,18 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ['sharp', 'onnxruntime-node'],
+  
+  // Production-level optimizations
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production',
+  },
+  
+  // Hydration and SSR optimizations
+  experimental: {
+    optimizePackageImports: ['@radix-ui', 'lucide-react'],
+    scrollRestoration: true,
+  },
+
   images: {
     remotePatterns: [
       {
@@ -11,6 +23,33 @@ const nextConfig = {
       }
     ]
   },
+  
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY'
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff'
+          },
+          {
+            key: 'Referrer-Policy',
+            value: 'strict-origin-when-cross-origin'
+          },
+          {
+            key: 'X-XSS-Protection',
+            value: '1; mode=block'
+          }
+        ]
+      }
+    ]
+  },
+  
   async rewrites() {
     return [
       {
@@ -19,6 +58,7 @@ const nextConfig = {
       }
     ]
   },
+  
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {
@@ -30,8 +70,27 @@ const nextConfig = {
         tls: false
       }
     }
+    
+    // Production optimizations
+    if (process.env.NODE_ENV === 'production') {
+      config.optimization = {
+        ...config.optimization,
+        splitChunks: {
+          chunks: 'all',
+          cacheGroups: {
+            vendor: {
+              test: /[\\/]node_modules[\\/]/,
+              name: 'vendors',
+              chunks: 'all',
+            },
+          },
+        },
+      }
+    }
+    
     return config
   },
+  
   poweredByHeader: false,
   compress: true,
   generateEtags: false,
