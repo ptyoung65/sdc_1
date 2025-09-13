@@ -26,7 +26,7 @@ except ImportError:
 
 # Document processing imports
 import numpy as np
-from sentence_transformers import SentenceTransformer
+# from sentence_transformers import SentenceTransformer  # PyTorch/Transformers disabled
 import hashlib
 
 # Configure logging
@@ -125,8 +125,9 @@ class VectorDBManager:
             )
             
             # Initialize embedding model
-            self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            logger.info("🤖 Embedding model loaded: all-MiniLM-L6-v2")
+            # self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # PyTorch/Transformers disabled
+            self.embedding_model = None  # Using mock embeddings instead
+            logger.info("🤖 Using mock embeddings (PyTorch/Transformers disabled)")
             
             # Create collection if not exists
             await self._create_collection()
@@ -272,7 +273,9 @@ class VectorDBManager:
                 )
             
             # Generate query embedding
-            query_embedding = self.embedding_model.encode([search_request.query])[0].tolist()
+            # query_embedding = self.embedding_model.encode([search_request.query])[0].tolist()  # PyTorch/Transformers disabled
+            # Using mock random embedding instead
+            query_embedding = np.random.rand(self.dimension).tolist()
             
             # Build base search parameters
             search_params = {
@@ -374,7 +377,9 @@ class VectorDBManager:
                         continue
                     
                     # Generate embedding
-                    embedding = self.embedding_model.encode([text_content])[0].tolist()
+                    # embedding = self.embedding_model.encode([text_content])[0].tolist()  # PyTorch/Transformers disabled
+                    # Using mock random embedding instead
+                    embedding = np.random.rand(self.dimension).tolist()
                     
                     # Create document ID if not provided
                     doc_id = doc.get("doc_id", str(uuid.uuid4()))

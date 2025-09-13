@@ -1515,20 +1515,18 @@ async def upload_document_default(
                 temp_file.write(file_content)
             
             # Process with Docling
-            docling_url = os.getenv("DOCLING_URL", "http://localhost:5000")
-            docling_client = DoclingClient(docling_url)
-            docling_result = await docling_client.process_document(temp_file_path, file.filename)
+            docling_client = DoclingClient()
+            success, docling_result = await docling_client.convert_document(file_content, file.filename)
             
             # Use extracted text content
-            if docling_result.get('text_content'):
-                processed_content = docling_result['text_content'].encode('utf-8')
+            if success and docling_result.get('content'):
+                processed_content = docling_result['content'].encode('utf-8')
                 processing_method = "docling"
                 print(f"📄 [DOCLING] Successfully processed document. Text length: {len(processed_content)} chars")
             else:
-                print(f"⚠️ [DOCLING] No text content extracted, using original file")
-            
-            # Cleanup
-            await docling_client.close()
+                print(f"⚠️ [DOCLING] No text content extracted, fallback to alternative processor")
+                # Force fallback to alternative processor when no text extracted
+                raise Exception("No text content from Docling")
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
                 
@@ -1539,15 +1537,17 @@ async def upload_document_default(
             if ALT_PROCESSOR_AVAILABLE and file_extension in structured_formats:
                 try:
                     alt_processor = AlternativeProcessor()
-                    alt_result = await alt_processor.process_document(file_content, file.filename)
+                    alt_success, alt_result = await alt_processor.process_document(file_content, file.filename)
                     
-                    if alt_result.get('text_content'):
-                        processed_content = alt_result['text_content'].encode('utf-8')
+                    if alt_success and alt_result.get('content'):
+                        processed_content = alt_result['content'].encode('utf-8')
                         processing_method = "alternative_processor"
                         print(f"📄 [ALT-PROC] Successfully processed document. Text length: {len(processed_content)} chars")
                     else:
-                        print(f"⚠️ [ALT-PROC] No text content extracted, using original file")
-                        processing_method = "basic_fallback"
+                        print(f"⚠️ [ALT-PROC] No text content extracted, using fallback message")
+                        fallback_msg = f"이 문서({file.filename})는 {file_extension.upper()} 형식이지만 텍스트를 추출할 수 없었습니다. 문서를 다시 업로드하거나 텍스트 형식으로 변환해 주세요."
+                        processed_content = fallback_msg.encode('utf-8')
+                        processing_method = "text_fallback"
                 except Exception as alt_e:
                     print(f"⚠️ [ALT-PROC] Alternative processor also failed: {str(alt_e)}")
                     processing_method = "basic_fallback"
@@ -1570,15 +1570,18 @@ async def upload_document_default(
                 
                 # Process with Alternative Processor
                 alt_processor = AlternativeProcessor()
-                alt_result = await alt_processor.process_document(file_content, file.filename)
+                alt_success, alt_result = await alt_processor.process_document(file_content, file.filename)
                 
                 # Use extracted text content
-                if alt_result.get('text_content'):
-                    processed_content = alt_result['text_content'].encode('utf-8')
+                if alt_success and alt_result.get('content'):
+                    processed_content = alt_result['content'].encode('utf-8')
                     processing_method = "alternative_processor"
                     print(f"📄 [ALT-PROC] Successfully processed document. Text length: {len(processed_content)} chars")
                 else:
-                    print(f"⚠️ [ALT-PROC] No text content extracted, using original file")
+                    print(f"⚠️ [ALT-PROC] No text content extracted, using fallback message")
+                    fallback_msg = f"이 문서({file.filename})는 {file_extension.upper()} 형식이지만 텍스트를 추출할 수 없었습니다. 문서를 다시 업로드하거나 텍스트 형식으로 변환해 주세요."
+                    processed_content = fallback_msg.encode('utf-8')
+                    processing_method = "text_fallback"
                 
                 # Cleanup
                 if os.path.exists(temp_file_path):
